@@ -1,7 +1,10 @@
 package dev.jdtech.jellyfin.presentation.film
 
+import android.app.Activity
 import kotlinx.coroutines.launch
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +56,7 @@ import dev.jdtech.jellyfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.presentation.utils.ExternalPlayerViewModel
 import dev.jdtech.jellyfin.presentation.utils.launchExternalPlayerIfEnabled
+import dev.jdtech.jellyfin.presentation.utils.rememberExternalPlayerLauncher
 import java.util.UUID
 import org.jellyfin.sdk.model.api.BaseItemKind
 
@@ -70,6 +74,16 @@ fun SeasonScreen(
     val coroutineScope = rememberCoroutineScope()
     val externalPlayerVm: ExternalPlayerViewModel = hiltViewModel()
 
+    val externalPlayerLauncher = rememberExternalPlayerLauncher { positionMs ->
+        coroutineScope.launch {
+            if (positionMs != null) {
+                externalPlayerVm.reportStop(seasonId, positionMs)
+            }
+            // Instantly refresh the UI
+            viewModel.loadSeason(seasonId = seasonId)
+        }
+    }
+
     LaunchedEffect(true) { viewModel.loadSeason(seasonId = seasonId) }
 
     SeasonScreenLayout(
@@ -78,13 +92,18 @@ fun SeasonScreen(
             when (action) {
                 is SeasonAction.Play -> {
                     coroutineScope.launch {
+                        val targetEpisode = state.episodes.firstOrNull { !it.played }
+                        val playItemId = if (!action.startFromBeginning && targetEpisode != null) targetEpisode.id else seasonId
+                        val playItemKind = if (!action.startFromBeginning && targetEpisode != null) BaseItemKind.EPISODE else BaseItemKind.SEASON
+
                         launchExternalPlayerIfEnabled(
                             context = context,
                             appPreferences = externalPlayerVm.appPreferences,
                             playlistManager = externalPlayerVm.playlistManager,
-                            itemId = seasonId,
-                            itemKind = BaseItemKind.SEASON,
+                            itemId = playItemId,
+                            itemKind = playItemKind,
                             startFromBeginning = action.startFromBeginning,
+                            externalPlayerLauncher = externalPlayerLauncher,
                             launchInternalPlayer = {
                                 val intent = Intent(context, PlayerActivity::class.java)
                                 intent.putExtra("itemId", seasonId.toString())

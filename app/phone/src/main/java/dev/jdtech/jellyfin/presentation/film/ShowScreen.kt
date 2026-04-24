@@ -1,8 +1,10 @@
 package dev.jdtech.jellyfin.presentation.film
 
-import kotlinx.coroutines.launch
+import android.app.Activity
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,7 +66,9 @@ import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.utils.getShowDateString
 import dev.jdtech.jellyfin.presentation.utils.ExternalPlayerViewModel
 import dev.jdtech.jellyfin.presentation.utils.launchExternalPlayerIfEnabled
+import dev.jdtech.jellyfin.presentation.utils.rememberExternalPlayerLauncher
 import java.util.UUID
+import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
 
 @Composable
@@ -83,6 +87,16 @@ fun ShowScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    val externalPlayerLauncher = rememberExternalPlayerLauncher { positionMs ->
+        coroutineScope.launch {
+            if (positionMs != null) {
+                externalPlayerVm.reportStop(showId, positionMs)
+            }
+            // Instantly refresh the UI
+            viewModel.loadShow(showId = showId)
+        }
+    }
+
     LaunchedEffect(true) { viewModel.loadShow(showId = showId) }
 
     ShowScreenLayout(
@@ -91,13 +105,18 @@ fun ShowScreen(
             when (action) {
                 is ShowAction.Play -> {
                     coroutineScope.launch {
+                        val targetEpisode = state.nextUp
+                        val playItemId = if (!action.startFromBeginning && targetEpisode != null) targetEpisode.id else showId
+                        val playItemKind = if (!action.startFromBeginning && targetEpisode != null) BaseItemKind.EPISODE else BaseItemKind.SERIES
+
                         launchExternalPlayerIfEnabled(
                             context = context,
                             appPreferences = externalPlayerVm.appPreferences,
                             playlistManager = externalPlayerVm.playlistManager,
-                            itemId = showId,
-                            itemKind = BaseItemKind.SERIES,
+                            itemId = playItemId,      // Passes specific Episode ID if resuming
+                            itemKind = playItemKind,  // Passes EPISODE kind if resuming
                             startFromBeginning = action.startFromBeginning,
+                            externalPlayerLauncher = externalPlayerLauncher,
                             launchInternalPlayer = {
                                 val intent = Intent(context, PlayerActivity::class.java)
                                 intent.putExtra("itemId", showId.toString())

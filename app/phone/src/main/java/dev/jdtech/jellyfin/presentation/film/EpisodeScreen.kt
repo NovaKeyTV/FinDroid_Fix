@@ -1,7 +1,10 @@
 package dev.jdtech.jellyfin.presentation.film
 
+import android.app.Activity
 import kotlinx.coroutines.launch
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +65,7 @@ import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.presentation.utils.ExternalPlayerViewModel
 import dev.jdtech.jellyfin.presentation.utils.launchExternalPlayerIfEnabled
+import dev.jdtech.jellyfin.presentation.utils.rememberExternalPlayerLauncher
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
 import dev.jdtech.jellyfin.utils.format
 import java.util.UUID
@@ -84,6 +88,16 @@ fun EpisodeScreen(
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
+
+    val externalPlayerLauncher = rememberExternalPlayerLauncher { positionMs ->
+        coroutineScope.launch {
+            if (positionMs != null) {
+                externalPlayerVm.reportStop(episodeId, positionMs)
+            }
+            // Instantly refresh the UI
+            viewModel.loadEpisode(episodeId = episodeId)
+        }
+    }
 
     LaunchedEffect(true) { viewModel.loadEpisode(episodeId = episodeId) }
 
@@ -120,6 +134,7 @@ fun EpisodeScreen(
                             itemId = episodeId,
                             itemKind = BaseItemKind.EPISODE,
                             startFromBeginning = action.startFromBeginning,
+                            externalPlayerLauncher = externalPlayerLauncher,
                             launchInternalPlayer = {
                                 val intent = Intent(context, PlayerActivity::class.java)
                                 intent.putExtra("itemId", episodeId.toString())
