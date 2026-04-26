@@ -1,7 +1,10 @@
 package dev.jdtech.jellyfin.presentation.film
 
+import android.app.Activity
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +37,7 @@ import androidx.compose.ui.tooling.preview.PreviewScreenSizes
 import androidx.core.graphics.toColorInt
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.rememberCoroutineScope
 import dev.jdtech.jellyfin.PlayerActivity
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.downloader.DownloaderAction
@@ -58,9 +62,12 @@ import dev.jdtech.jellyfin.presentation.theme.spacings
 import dev.jdtech.jellyfin.presentation.utils.LocalOfflineMode
 import dev.jdtech.jellyfin.presentation.utils.rememberSafePadding
 import dev.jdtech.jellyfin.utils.ObserveAsEvents
+import dev.jdtech.jellyfin.presentation.utils.ExternalPlayerViewModel
+import dev.jdtech.jellyfin.presentation.utils.launchExternalPlayerIfEnabled
+import dev.jdtech.jellyfin.presentation.utils.rememberExternalPlayerLauncher
 import java.util.UUID
+import kotlinx.coroutines.launch
 import org.jellyfin.sdk.model.api.BaseItemKind
-
 @Composable
 fun MovieScreen(
     movieId: UUID,
@@ -73,9 +80,21 @@ fun MovieScreen(
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val isOfflineMode = LocalOfflineMode.current
+    val coroutineScope = rememberCoroutineScope()
+    val externalPlayerVm: ExternalPlayerViewModel = hiltViewModel()
 
     val state by viewModel.state.collectAsStateWithLifecycle()
     val downloaderState by downloaderViewModel.state.collectAsStateWithLifecycle()
+
+    val externalPlayerLauncher = rememberExternalPlayerLauncher { positionMs ->
+        coroutineScope.launch {
+            if (positionMs != null) {
+                externalPlayerVm.reportStop(movieId, positionMs)
+            }
+            // Instantly refresh the UI
+            viewModel.loadMovie(movieId = movieId)
+        }
+    }
 
     LaunchedEffect(true) { viewModel.loadMovie(movieId = movieId) }
 
@@ -102,11 +121,24 @@ fun MovieScreen(
         onAction = { action ->
             when (action) {
                 is MovieAction.Play -> {
-                    val intent = Intent(context, PlayerActivity::class.java)
-                    intent.putExtra("itemId", movieId.toString())
-                    intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
-                    intent.putExtra("startFromBeginning", action.startFromBeginning)
-                    context.startActivity(intent)
+                    coroutineScope.launch {
+                        launchExternalPlayerIfEnabled(
+                            context = context,
+                            appPreferences = externalPlayerVm.appPreferences,
+                            playlistManager = externalPlayerVm.playlistManager,
+                            itemId = movieId,
+                            itemKind = BaseItemKind.MOVIE,
+                            startFromBeginning = action.startFromBeginning,
+                            externalPlayerLauncher = externalPlayerLauncher,
+                            launchInternalPlayer = {
+                                val intent = Intent(context, PlayerActivity::class.java)
+                                intent.putExtra("itemId", movieId.toString())
+                                intent.putExtra("itemKind", BaseItemKind.MOVIE.serialName)
+                                intent.putExtra("startFromBeginning", action.startFromBeginning)
+                                context.startActivity(intent)
+                            }
+                        )
+                    }
                 }
                 is MovieAction.PlayTrailer -> {
                     try {

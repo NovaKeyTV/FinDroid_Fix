@@ -1,7 +1,11 @@
 package dev.jdtech.jellyfin.presentation.film
 
+import android.app.Activity
+import kotlinx.coroutines.launch
 import android.view.KeyEvent
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,7 +59,9 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.LocalContentColor
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.compose.runtime.rememberCoroutineScope
 import coil3.compose.AsyncImage
+import org.jellyfin.sdk.model.api.BaseItemKind
 import dev.jdtech.jellyfin.core.R as CoreR
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyEpisode
 import dev.jdtech.jellyfin.core.presentation.dummy.dummyShow
@@ -66,6 +72,9 @@ import dev.jdtech.jellyfin.film.presentation.show.ShowViewModel
 import dev.jdtech.jellyfin.models.FindroidItem
 import dev.jdtech.jellyfin.presentation.theme.FindroidTheme
 import dev.jdtech.jellyfin.presentation.theme.spacings
+import dev.jdtech.jellyfin.presentation.utils.ExternalPlayerViewModel
+import dev.jdtech.jellyfin.presentation.utils.launchExternalPlayerIfEnabled
+import dev.jdtech.jellyfin.presentation.utils.rememberExternalPlayerLauncher
 import dev.jdtech.jellyfin.ui.components.Direction
 import dev.jdtech.jellyfin.ui.components.ItemCard
 import dev.jdtech.jellyfin.utils.getShowDateString
@@ -77,11 +86,23 @@ fun ShowScreen(
     navigateToItem: (item: FindroidItem) -> Unit,
     navigateToPlayer: (itemId: UUID) -> Unit,
     viewModel: ShowViewModel = hiltViewModel(),
+    externalPlayerVm: ExternalPlayerViewModel = hiltViewModel() // Injected here
 ) {
     val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
+    val coroutineScope = rememberCoroutineScope()
 
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    val externalPlayerLauncher = rememberExternalPlayerLauncher { positionMs ->
+        coroutineScope.launch {
+            if (positionMs != null) {
+                externalPlayerVm.reportStop(showId, positionMs)
+            }
+            // Instantly refresh the UI
+            viewModel.loadShow(showId = showId)
+        }
+    }
 
     LaunchedEffect(true) { viewModel.loadShow(showId) }
 
@@ -90,7 +111,24 @@ fun ShowScreen(
         onAction = { action ->
             when (action) {
                 is ShowAction.Play -> {
-                    navigateToPlayer(showId)
+                    coroutineScope.launch {
+                        val targetEpisode = state.nextUp
+                        val playItemId = if (!action.startFromBeginning && targetEpisode != null) targetEpisode.id else showId
+                        val playItemKind = if (!action.startFromBeginning && targetEpisode != null) BaseItemKind.EPISODE else BaseItemKind.SERIES
+
+                        launchExternalPlayerIfEnabled(
+                            context = context,
+                            appPreferences = externalPlayerVm.appPreferences,
+                            playlistManager = externalPlayerVm.playlistManager,
+                            itemId = playItemId,      // Passes specific Episode ID if resuming
+                            itemKind = playItemKind,  // Passes EPISODE kind if resuming
+                            startFromBeginning = action.startFromBeginning,
+                            externalPlayerLauncher = externalPlayerLauncher,
+                            launchInternalPlayer = {
+                                navigateToPlayer(showId)
+                            }
+                        )
+                    }
                 }
                 is ShowAction.PlayTrailer -> {
                     try {
